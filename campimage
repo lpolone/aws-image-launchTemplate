@@ -1,0 +1,68 @@
+#!/bin/bash
+
+nameInstance=$1
+environment=$2
+now=$(date +"%d-%m-%Y_%H-%M-%S")
+
+function precheck() {
+    [ "${nameInstance}" == "" ] && usage && exit 1
+    [ "${environment}" == "" ] && environment="prod"
+
+    if [ "${environment}" == "prod" ]; then
+        region="us-east-1"
+        launchTemplateId=lt-xxx
+    elif [ "${environment}" == "stage" ]; then
+        region="us-west-2"
+        launchTemplateId=lt-xxx
+    else
+        usage
+        exit 1
+    fi
+}
+
+function usage() {
+    echo ""
+    echo "Usage:"
+    echo "${0} <ec2 name> <environment>"
+    echo "Ec2 name: newton, galileu."
+    echo "Environment: prod, stage (optional, default prod)."
+    echo ""
+}
+
+function generateImage() {
+    set -e
+    # get instande id
+    instanceId=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=ec2-${nameInstance}-camplearning-${environment}" "Name=instance-state-name,Values=running" --region ${region} --output json | jq '.Reservations[0].Instances[0].InstanceId')
+    [ "${instanceId}" == "" ] && echo "ERROR: Ami not found." && exit 1
+    commaFix=${instanceId%\"*}
+    instanceId=${commaFix#*\"}
+
+    # generate new image
+    imageId=$(aws ec2 create-image --instance-id ${instanceId} --region ${region} --name "ec2-${nameInstance}-camplearning-${environment}-${now}" --description "Managed by Jurid campimage" | grep ImageId)
+    echo "New image created"
+}
+
+function createLaunchTemplate() {
+    # create new launch template version
+    lastVersion=$(aws ec2 describe-launch-template-versions --region ${region} --versions $Latest --launch-template-id ${launchTemplateId} --max-results 1 | jq '.LaunchTemplateVersions[0].VersionNumber')
+    aws ec2 create-launch-template-version --launch-template-id ${launchTemplateId} --region ${region} --version-description "Managed by Jurid campimage" --source-version ${lastVersion} --launch-template-data "{$imageId}" >/dev/null 2>&1
+    echo "New launch template created"
+    echo ${imageId}
+}
+
+# falta sed para atualizar terraform
+
+precheck
+
+case "${nameInstance}" in
+    newton)
+        generateImage
+        createLaunchTemplate
+        ;;
+    galileu)
+        generateImage
+        ;;
+    *)
+        usage
+        ;; 
+esac
